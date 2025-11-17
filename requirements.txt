@@ -1,3 +1,4 @@
-# No third-party dependencies are required; the converter uses only the Python standard library.
-# will be updated if any third-party packages are needed in the future.
-#  --- IGNORE ---
+# The converter uses only the Python standard library (argparse, csv, json, tkinter, etc.).
+# Tkinter ships with CPython on Windows/macOS. Linux users may need to install the
+# system package (e.g., `sudo apt install python3-tk`) before running the GUI.
+# Keep this file committed so any future third-party dependencies can be pinned here.

@@ -6,11 +6,11 @@ This repository contains a Python utility that transforms the supplied productio
 
 | Path | Purpose |
 | --- | --- |
-| `csv_to_stdf.py` | CLI entry point; orchestrates CSV parsing, metadata assembly, and STDF writing. |
+| `csv_to_stdf.py` | CLI entry point; orchestrates CSV parsing, metadata assembly, STDF writing, and batch jobs. |
+| `gui_app.py` | Tkinter GUI that batches CSV files without touching the command line. |
 | `stdf_converter/csv_parser.py` | Understands the multi-row CSV header, extracts measurement definitions, and returns per-device records. |
 | `stdf_converter/writer.py` | Minimal STDF v4 binary writer plus record definitions (FAR, ATR, MIR, PIR, PTR, PRR, MRR). |
-| `Sample data.csv` | Example Selene CSV you can use for testing. |
-| `sample_output.stdf` | STDF file produced by running the converter on the sample CSV (useful for regression checks). |
+| `requirements.txt` | Place to pin dependencies (currently just notes that we use the standard library). |
 
 ## How the Data Flows
 
@@ -26,6 +26,7 @@ This repository contains a Python utility that transforms the supplied productio
 
 - Python 3.11 (already provided via `.venv`).
 - `pip` (bundled with the Python interpreter) so you can install from `requirements.txt`.
+- Tkinter (bundled with standard CPython on Windows/macOS; install `python3-tk` on Linux distros) for the GUI.
 - Windows PowerShell is assumed for the commands below; translate to your shell if needed.
 
 ### Install Dependencies
@@ -48,15 +49,15 @@ Use that interpreter for every command to ensure consistent dependencies.
 
 ## Running the Converter (Step by Step)
 
-1. Place your source CSV (default: `Sample data.csv`) in the repository root.
+1. Place your source CSV anywhere convenient (use `--input` to point at it explicitly).
 2. Optionally prepare a metadata JSON file (see [Metadata Overrides](#metadata-overrides)).
 3. Run the converter:
 
 ```powershell
 D:/converter/.venv/Scripts/python.exe csv_to_stdf.py `
-    --input "Sample data.csv" `
-    --output "sample.stdf" `
-    --meta "meta.json"      # optional
+  --input "lot1.csv" `
+  --output "lot1.stdf" `
+  --meta "meta.json"      # optional
 ```
 
 4. Inspect the console output (it reports the target STDF path).
@@ -66,13 +67,28 @@ D:/converter/.venv/Scripts/python.exe csv_to_stdf.py `
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `--input` | `Sample data.csv` | Path to the Selene-format CSV file. |
+| `--input` | `input.csv` | Path to the Selene-format CSV file. |
 | `--output` | `out.stdf` | Destination STDF v4 binary file. |
 | `--meta` | _unset_ | Optional JSON file describing MIR overrides, ATR notes, and head/site IDs. |
 | `--head` | `1` | Default test head number (used when CSV lacks that info). |
 | `--site` | `1` | Default site number. |
+| `--inputs` | _unset_ | Provide multiple CSV paths to convert in one run (overrides `--input`). |
+| `--output-dir` | `.` | Destination directory for generated STDF files when using `--inputs`. |
 
 If the `--meta` file provides `head_number` / `site_number`, they override the CLI defaults.
+
+### Batch Conversion
+
+Use `--inputs` to process multiple CSV files at once. Each CSV is written to the folder provided by `--output-dir` (created automatically) while retaining the source filename stem:
+
+```powershell
+D:/converter/.venv/Scripts/python.exe csv_to_stdf.py `
+  --inputs "lot1.csv" "lot2.csv" "lot3.csv" `
+  --output-dir "artifacts" `
+  --meta "meta.json"
+```
+
+All jobs share the same metadata overrides, head, and site defaults. If any file fails, the CLI reports the failures but continues processing the rest.
 
 ## Metadata Overrides
 
@@ -137,17 +153,35 @@ D:/converter/.venv/Scripts/python.exe csv_to_stdf.py --input prod.csv --output p
 - **Different CSV layout** – update `stdf_converter/csv_parser.py` to describe the new structure; the rest of the pipeline is agnostic as long as `ParsedCsv` exposes metadata, tests, and device rows.
 - **Additional STDF records** – declare new `RecordDef` entries in `stdf_converter/writer.py` and emit them from the CLI.
 
+## Graphical Interface
+
+Prefer not to live in the terminal? Run the Tkinter GUI located in `gui_app.py`. It lets you:
+
+- Queue multiple CSV files via a file picker (remove or clear entries as needed).
+- Choose an output directory and optional metadata JSON file.
+- Override head/site defaults.
+- Monitor progress and errors in the built-in log window.
+
+Launch it with:
+
+```powershell
+D:/converter/.venv/Scripts/python.exe gui_app.py
+```
+
 ## Quick Reference Commands
 
 ```powershell
 # Show help
 D:/converter/.venv/Scripts/python.exe csv_to_stdf.py --help
 
-# Convert the sample CSV bundled with the repo
-D:/converter/.venv/Scripts/python.exe csv_to_stdf.py --input "Sample data.csv" --output "sample_output.stdf"
+# Convert a single CSV
+D:/converter/.venv/Scripts/python.exe csv_to_stdf.py --input "lot1.csv" --output "lot1.stdf"
 
-# Convert a production CSV with metadata overrides
-D:/converter/.venv/Scripts/python.exe csv_to_stdf.py --input "prod.csv" --output "prod.stdf" --meta "meta.json"
+# Batch convert three CSVs
+D:/converter/.venv/Scripts/python.exe csv_to_stdf.py --inputs "lot1.csv" "lot2.csv" "lot3.csv" --output-dir "artifacts"
+
+# Launch the GUI
+D:/converter/.venv/Scripts/python.exe gui_app.py
 ```
 
 Keep this README close by for the exact flag names and expected file layout as you iterate on the converter.

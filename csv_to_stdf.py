@@ -22,22 +22,102 @@ class MetaConfig:
     site_number: int
 
 
+@dataclass
+class ConversionJob:
+    input_path: Path
+    output_path: Path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", default="Sample data.csv", help="Path to the CSV input file")
+    parser.add_argument("--input", default="input.csv", help="Path to the CSV input file")
     parser.add_argument("--output", default="out.stdf", help="Path to the STDF output file")
+    parser.add_argument(
+        "--inputs",
+        nargs="+",
+        help="Optional list of CSV files to batch convert (overrides --input/--output)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=".",
+        help="Destination directory for generated STDF files when using --inputs",
+    )
     parser.add_argument("--meta", help="Optional JSON file with MIR overrides and ATR notes")
     parser.add_argument("--head", type=int, default=1, help="Default test head number")
     parser.add_argument("--site", type=int, default=1, help="Default site number")
     args = parser.parse_args()
 
-    parsed = parse_csv(args.input)
-    if not parsed.devices:
-        raise SystemExit("No device rows detected in the CSV file")
+    jobs = build_jobs(args)
+    if not jobs:
+        raise SystemExit("No input files were supplied")
 
     meta_cfg = load_meta_config(args.meta, default_head=args.head, default_site=args.site)
-    output_path = Path(args.output)
+    failures: List[tuple[ConversionJob, Exception]] = []
+    for job in jobs:
+        try:
+            convert_csv_file(job.input_path, job.output_path, meta_cfg, source_label="CLI")
+            print(f"[OK] {job.input_path} → {job.output_path}")
+        except Exception as exc:  # noqa: BLE001
+            failures.append((job, exc))
+            print(f"[FAIL] {job.input_path}: {exc}", file=sys.stderr)
 
+    if failures:
+        print(f"Completed with {len(failures)} error(s).", file=sys.stderr)
+        for job, exc in failures:
+            print(f"  - {job.input_path} failed: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+
+
+def load_meta_config(meta_path: str | None, default_head: int, default_site: int) -> MetaConfig:
+    if not meta_path:
+        return MetaConfig(mir_overrides={}, atr_entries=[], head_number=default_head, site_number=default_site)
+    raw: Dict[str, object]
+    with Path(meta_path).open() as handle:
+        raw = json.load(handle)
+        if not isinstance(raw, dict):
+            raise ValueError("Metadata JSON must be an object")
+    mir_overrides_raw = raw.get("mir_overrides", {})
+    if not isinstance(mir_overrides_raw, dict):
+        mir_overrides_raw = {}
+    atr_entries_raw = raw.get("atr_entries", [])
+    if not isinstance(atr_entries_raw, list):
+        atr_entries_raw = []
+    return MetaConfig(
+        mir_overrides={k: str(v) for k, v in mir_overrides_raw.items()},
+        atr_entries=[str(item) for item in atr_entries_raw],
+        head_number=int(raw.get("head_number", default_head)),
+        site_number=int(raw.get("site_number", default_site)),
+    )
+
+
+def build_jobs(args) -> List[ConversionJob]:
+    if args.inputs:
+        output_dir = Path(args.output_dir or ".").expanduser()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return [
+            ConversionJob(Path(input_path), output_dir / (Path(input_path).stem + ".stdf"))
+            for input_path in args.inputs
+        ]
+
+    single_output = Path(args.output).expanduser()
+    single_output.parent.mkdir(parents=True, exist_ok=True)
+    return [ConversionJob(Path(args.input), single_output)]
+
+
+def convert_csv_file(
+    input_path: str | Path,
+    output_path: str | Path,
+    meta_cfg: MetaConfig,
+    *,
+    source_label: str | None = None,
+) -> Path:
+    input_path = Path(input_path)
+    parsed = parse_csv(str(input_path))
+    if not parsed.devices:
+        raise ValueError(f"No device rows detected in {input_path}")
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     timestamps = [_device_timestamp(device.metadata) for device in parsed.devices]
     setup_time = min(timestamps)
     finish_time = max(timestamps)
@@ -46,9 +126,8 @@ def main() -> None:
         stdf = stdf_writer.BinaryRecordWriter(stream)
         stdf.write(stdf_writer.FAR, {"CPU_TYPE": 2, "STDF_VER": 4})
 
-        atr_messages = [
-            f"csv_to_stdf {Path(sys.argv[0]).name} input={Path(args.input).name}"
-        ] + meta_cfg.atr_entries
+        invoker = source_label or Path(sys.argv[0]).name
+        atr_messages = [f"csv_to_stdf {invoker} input={Path(input_path).name}"] + meta_cfg.atr_entries
         now = int(time.time())
         for message in atr_messages:
             stdf.write(stdf_writer.ATR, {"MOD_TIM": now, "CMD_LINE": message})
@@ -76,29 +155,7 @@ def main() -> None:
             },
         )
 
-    print(f"Wrote STDF v4 stream to {output_path}")
-
-
-def load_meta_config(meta_path: str | None, default_head: int, default_site: int) -> MetaConfig:
-    if not meta_path:
-        return MetaConfig(mir_overrides={}, atr_entries=[], head_number=default_head, site_number=default_site)
-    raw: Dict[str, object]
-    with Path(meta_path).open() as handle:
-        raw = json.load(handle)
-        if not isinstance(raw, dict):
-            raise ValueError("Metadata JSON must be an object")
-    mir_overrides_raw = raw.get("mir_overrides", {})
-    if not isinstance(mir_overrides_raw, dict):
-        mir_overrides_raw = {}
-    atr_entries_raw = raw.get("atr_entries", [])
-    if not isinstance(atr_entries_raw, list):
-        atr_entries_raw = []
-    return MetaConfig(
-        mir_overrides={k: str(v) for k, v in mir_overrides_raw.items()},
-        atr_entries=[str(item) for item in atr_entries_raw],
-        head_number=int(raw.get("head_number", default_head)),
-        site_number=int(raw.get("site_number", default_site)),
-    )
+    return output_path
 
 
 def build_mir_values(parsed: ParsedCsv, setup_time: int, meta_cfg: MetaConfig) -> Dict[str, object]:

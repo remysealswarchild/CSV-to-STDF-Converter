@@ -10,6 +10,7 @@ __pycache__/
 # STDF outputs and other generated binaries
 *.stdf
 *.bin
+*.csv
 
 # OS noise
 .DS_Store
