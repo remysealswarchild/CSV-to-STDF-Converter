@@ -25,8 +25,16 @@ This repository contains a Python utility that transforms the supplied productio
 ## Prerequisites
 
 - Python 3.11 (already provided via `.venv`).
-- No third-party libraries beyond the standard library are required.
+- `pip` (bundled with the Python interpreter) so you can install from `requirements.txt`.
 - Windows PowerShell is assumed for the commands below; translate to your shell if needed.
+
+### Install Dependencies
+
+Even though the converter currently relies only on the standard library, keep your environment in sync with future updates by installing from `requirements.txt`:
+
+```powershell
+D:/converter/.venv/Scripts/python.exe -m pip install -r requirements.txt
+```
 
 ### Activate / Use the Virtual Environment
 
