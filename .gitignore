@@ -1,0 +1,16 @@
+# Virtual environments
+.venv/
+env/
+
+# Bytecode and cache directories
+__pycache__/
+*.pyc
+*.pyo
+
+# STDF outputs and other generated binaries
+*.stdf
+*.bin
+
+# OS noise
+.DS_Store
+Thumbs.db
