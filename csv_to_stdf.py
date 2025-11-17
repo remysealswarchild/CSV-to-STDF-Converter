@@ -1,3 +1,6 @@
+# (c) Copyright Derrick Tunde.
+# git repo https://github.com/remysealswarchild/
+# All other rights reserved.
 """CLI utility that converts the provided CSV file into an STDF v4 stream."""
 from __future__ import annotations
 

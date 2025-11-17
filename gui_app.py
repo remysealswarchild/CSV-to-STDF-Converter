@@ -1,3 +1,6 @@
+# (c) Copyright Derrick Tunde.
+# git repo https://github.com/remysealswarchild/
+# All other rights reserved.
 """Simple Tkinter GUI for running CSV → STDF conversions with batch support."""
 from __future__ import annotations
 

@@ -1,3 +1,6 @@
+# (c) Copyright Derrick Tunde.
+# git repo https://github.com/remysealswarchild/
+# All other rights reserved.
 """Parses the Selene CSV layout into structured records."""
 from __future__ import annotations
 

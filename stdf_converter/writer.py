@@ -1,3 +1,6 @@
+# (c) Copyright Derrick Tunde.
+# git repo https://github.com/remysealswarchild/
+# All other rights reserved.
 """Minimal STDF v4 binary writer used by the CSV converter."""
 from __future__ import annotations
 
