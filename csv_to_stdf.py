@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Sequence
 
 from stdf_converter.csv_parser import ParsedCsv, TestDefinition, parse_csv
 from stdf_converter import writer as stdf_writer
@@ -23,6 +23,7 @@ class MetaConfig:
     atr_entries: List[str]
     head_number: int
     site_number: int
+    column_aliases: Dict[str, Sequence[str]]
 
 
 @dataclass
@@ -73,7 +74,13 @@ def main() -> None:
 
 def load_meta_config(meta_path: str | None, default_head: int, default_site: int) -> MetaConfig:
     if not meta_path:
-        return MetaConfig(mir_overrides={}, atr_entries=[], head_number=default_head, site_number=default_site)
+        return MetaConfig(
+            mir_overrides={},
+            atr_entries=[],
+            head_number=default_head,
+            site_number=default_site,
+            column_aliases=_build_column_aliases({}),
+        )
     raw: Dict[str, object]
     with Path(meta_path).open() as handle:
         raw = json.load(handle)
@@ -85,11 +92,15 @@ def load_meta_config(meta_path: str | None, default_head: int, default_site: int
     atr_entries_raw = raw.get("atr_entries", [])
     if not isinstance(atr_entries_raw, list):
         atr_entries_raw = []
+    column_aliases_raw = raw.get("column_aliases", {})
+    if not isinstance(column_aliases_raw, dict):
+        column_aliases_raw = {}
     return MetaConfig(
         mir_overrides={k: str(v) for k, v in mir_overrides_raw.items()},
         atr_entries=[str(item) for item in atr_entries_raw],
         head_number=int(raw.get("head_number", default_head)),
         site_number=int(raw.get("site_number", default_site)),
+        column_aliases=_build_column_aliases(column_aliases_raw),
     )
 
 
@@ -121,7 +132,8 @@ def convert_csv_file(
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    timestamps = [_device_timestamp(device.metadata) for device in parsed.devices]
+    alias_map = meta_cfg.column_aliases
+    timestamps = [_device_timestamp(device.metadata, alias_map) for device in parsed.devices]
     setup_time = min(timestamps)
     finish_time = max(timestamps)
 
@@ -146,13 +158,14 @@ def convert_csv_file(
                 device_ts,
                 head=meta_cfg.head_number,
                 site=meta_cfg.site_number,
+                alias_map=alias_map,
             )
 
         stdf.write(
             stdf_writer.MRR,
             {
                 "FINISH_T": finish_time,
-                "DISP_COD": "P" if _all_passed(parsed.devices) else "F",
+                "DISP_COD": "P" if _all_passed(parsed.devices, alias_map) else "F",
                 "USR_DESC": "CSV to STDF conversion complete",
                 "EXC_DESC": "",
             },
@@ -163,33 +176,38 @@ def convert_csv_file(
 
 def build_mir_values(parsed: ParsedCsv, setup_time: int, meta_cfg: MetaConfig) -> Dict[str, object]:
     first_meta = parsed.devices[0].metadata
+    alias_map = meta_cfg.column_aliases
+
+    def lookup(*keys: str, default: str = "") -> str:
+        return _meta_lookup(first_meta, alias_map, *keys, default=default)
+
     mir_values: Dict[str, object] = {
         "SETUP_T": setup_time,
         "START_T": setup_time,
         "STAT_NUM": 1,
-        "MODE_COD": (first_meta.get("TEST_MODE") or "P")[:1],
-        "LOT_ID": first_meta.get("LOT_ID", "UNKNOWN"),
-        "PART_TYP": first_meta.get("PRODUCT_PART", ""),
-        "NODE_NAM": first_meta.get("Test_Location", ""),
-        "TSTR_TYP": first_meta.get("TESTER_TYPE", first_meta.get("TESTER", "")),
-        "JOB_NAM": first_meta.get("TEST_PROGRAM", first_meta.get("Test_Name", "")),
-        "JOB_REV": first_meta.get("REVISION", ""),
-        "OPER_NAM": first_meta.get("SFIS_State", ""),
-        "EXEC_TYP": first_meta.get("Model", ""),
-        "EXEC_VER": first_meta.get("TESTER", ""),
-        "TEST_COD": first_meta.get("Test_Name", ""),
-        "TST_TEMP": first_meta.get("Station", ""),
+        "MODE_COD": (lookup("TEST_MODE") or "P")[:1],
+        "LOT_ID": lookup("LOT_ID", default="UNKNOWN"),
+        "PART_TYP": lookup("PRODUCT_PART"),
+        "NODE_NAM": lookup("Test_Location"),
+        "TSTR_TYP": lookup("TESTER_TYPE", "TESTER"),
+        "JOB_NAM": lookup("TEST_PROGRAM", "Test_Name"),
+        "JOB_REV": lookup("REVISION"),
+        "OPER_NAM": lookup("SFIS_State"),
+        "EXEC_TYP": lookup("Model"),
+        "EXEC_VER": lookup("TESTER"),
+        "TEST_COD": lookup("Test_Name"),
+        "TST_TEMP": lookup("Station"),
         "USER_TXT": "Generated via csv_to_stdf",
-        "PKG_TYP": first_meta.get("Package_Type", ""),
-        "FAMLY_ID": first_meta.get("PRODUCT_PART", ""),
-        "DATE_COD": first_meta.get("DATE", ""),
-        "FACIL_ID": first_meta.get("Test_Location", ""),
-        "FLOOR_ID": first_meta.get("Station", ""),
-        "PROC_ID": first_meta.get("TEST_PROGRAM", ""),
-        "OPER_FRQ": first_meta.get("TEST_MODE", ""),
-        "FLOW_ID": first_meta.get("Test_Type", ""),
-        "SETUP_ID": first_meta.get("Test_Location", ""),
-        "SERL_NUM": first_meta.get("TESTER", ""),
+        "PKG_TYP": lookup("Package_Type"),
+        "FAMLY_ID": lookup("PRODUCT_PART"),
+        "DATE_COD": lookup("DATE"),
+        "FACIL_ID": lookup("Test_Location"),
+        "FLOOR_ID": lookup("Station"),
+        "PROC_ID": lookup("TEST_PROGRAM"),
+        "OPER_FRQ": lookup("TEST_MODE"),
+        "FLOW_ID": lookup("Test_Type"),
+        "SETUP_ID": lookup("Test_Location"),
+        "SERL_NUM": lookup("TESTER"),
     }
     mir_values.update(meta_cfg.mir_overrides)
     return mir_values
@@ -202,8 +220,10 @@ def write_device_records(
     timestamp: int,
     head: int,
     site: int,
+    alias_map: Dict[str, Sequence[str]],
 ) -> None:
     metadata = device.metadata
+    lookup = lambda *keys, default="": _meta_lookup(metadata, alias_map, *keys, default=default)
     stdf.write(stdf_writer.PIR, {"HEAD_NUM": head, "SITE_NUM": site})
 
     executed_tests = 0
@@ -232,33 +252,34 @@ def write_device_records(
                 "LLM_SCAL": 0,
                 "HLM_SCAL": 0,
                 "OPT_FLAG": 0,
-                "ALARM_ID": metadata.get("Error Code", ""),
+                "ALARM_ID": lookup("Error Code"),
             },
         )
 
+    is_pass = _is_pass(metadata, alias_map)
     prr_payload = {
         "HEAD_NUM": head,
         "SITE_NUM": site,
-        "PART_FLG": 0 if _is_pass(metadata) else 1,
+        "PART_FLG": 0 if is_pass else 1,
         "NUM_TEST": executed_tests,
-        "HARD_BIN": 1 if _is_pass(metadata) else 255,
-        "SOFT_BIN": _parse_int(metadata.get("Error Code")) or (1 if _is_pass(metadata) else 255),
-        "X_COORD": _parse_int(metadata.get("X_CID")) or 0,
-        "Y_COORD": _parse_int(metadata.get("Y_CID")) or 0,
-        "TEST_T": int(float(metadata.get("Test Time", "0") or 0)),
-        "PART_ID": _resolve_part_id(metadata),
-        "PART_TXT": metadata.get("PRODUCT_PART", ""),
+        "HARD_BIN": 1 if is_pass else 255,
+        "SOFT_BIN": _parse_int(lookup("Error Code")) or (1 if is_pass else 255),
+        "X_COORD": _parse_int(lookup("X_CID")) or 0,
+        "Y_COORD": _parse_int(lookup("Y_CID")) or 0,
+        "TEST_T": int(float(lookup("Test Time", default="0") or 0)),
+        "PART_ID": _resolve_part_id(metadata, alias_map),
+        "PART_TXT": lookup("PRODUCT_PART"),
         "PART_FIX": b"",
     }
     stdf.write(stdf_writer.PRR, prr_payload)
 
 
-def _all_passed(devices) -> bool:
-    return all(_is_pass(device.metadata) for device in devices)
+def _all_passed(devices, alias_map) -> bool:
+    return all(_is_pass(device.metadata, alias_map) for device in devices)
 
 
-def _is_pass(metadata: Dict[str, str]) -> bool:
-    return (metadata.get("Test Result") or "").strip().upper() == "PASS"
+def _is_pass(metadata: Dict[str, str], alias_map: Dict[str, Sequence[str]] | None = None) -> bool:
+    return (_meta_lookup(metadata, alias_map, "Test Result") or "").strip().upper() == "PASS"
 
 
 def _parse_result_number(value: str | None) -> float | None:
@@ -286,15 +307,16 @@ def _parse_int(value: str | None) -> int | None:
         return None
 
 
-def _resolve_part_id(metadata: Dict[str, str]) -> str:
+def _resolve_part_id(metadata: Dict[str, str], alias_map: Dict[str, Sequence[str]] | None = None) -> str:
     for key in ("DMC_string", "IC_serial_CID", "IC_DEVICE_ID_CID", "product_id_CID", "Test_CID"):
-        if metadata.get(key):
-            return metadata[key]
-    return metadata.get("PRODUCT_PART", "")
+        value = _meta_lookup(metadata, alias_map, key)
+        if value:
+            return value
+    return _meta_lookup(metadata, alias_map, "PRODUCT_PART")
 
 
-def _device_timestamp(metadata: Dict[str, str]) -> int:
-    raw = metadata.get("DATE")
+def _device_timestamp(metadata: Dict[str, str], alias_map: Dict[str, Sequence[str]] | None = None) -> int:
+    raw = _meta_lookup(metadata, alias_map, "DATE")
     if raw:
         for fmt in ("%Y%m%d_%H%M%S", "%Y-%m-%d %H:%M:%S"):
             try:
@@ -307,3 +329,106 @@ def _device_timestamp(metadata: Dict[str, str]) -> int:
 
 if __name__ == "__main__":
     main()
+
+
+_NORMALIZED_CACHE_KEY = object()
+
+
+def _meta_lookup(
+    metadata: Dict[str, str],
+    alias_map: Dict[str, Sequence[str]] | None,
+    *keys: str,
+    default: str = "",
+) -> str:
+    search_keys: List[str] = []
+    alias_map = alias_map or {}
+    for key in keys:
+        if not key:
+            continue
+        search_keys.append(key)
+        normalized_key = _normalize_meta_key(key)
+        for alias in alias_map.get(normalized_key, ()):  # type: ignore[arg-type]
+            if alias:
+                search_keys.append(alias)
+
+    for key in search_keys:
+        if key in metadata:
+            value = metadata[key]
+            if value is not None:
+                return value
+    normalized = metadata.get(_NORMALIZED_CACHE_KEY)
+    if normalized is None:
+        normalized = {
+            _normalize_meta_key(existing_key): existing_value
+            for existing_key, existing_value in metadata.items()
+            if isinstance(existing_key, str)
+        }
+        metadata[_NORMALIZED_CACHE_KEY] = normalized
+    for key in search_keys:
+        normalized_key = _normalize_meta_key(key)
+        if normalized_key in normalized:
+            value = normalized[normalized_key]
+            if value is not None:
+                return value
+    return default
+
+
+def _normalize_meta_key(key: str) -> str:
+    return "".join(ch for ch in key.upper() if ch.isalnum())
+
+
+DEFAULT_COLUMN_ALIASES: Dict[str, Sequence[str]] = {
+    "LOT_ID": ("LOT", "LOTID", "LOT ID", "LOT-ID"),
+    "PRODUCT_PART": ("PRODUCT", "PART_NO", "PART NUMBER", "DEVICE", "DEVICE_ID"),
+    "TEST_MODE": ("MODE", "TEST MODE", "MODE_CODE"),
+    "Test_Location": ("LOCATION", "TEST LOCATION", "SITE_LOCATION"),
+    "TESTER_TYPE": ("TESTER TYPE", "TESTER_MODEL"),
+    "TESTER": ("TESTER NAME", "TESTER_ID", "HANDLER"),
+    "TEST_PROGRAM": ("PROGRAM", "JOB_NAME", "FLOW_NAME"),
+    "Test_Name": ("TEST NAME", "FLOW", "FLOW_NAME"),
+    "REVISION": ("JOB_REV", "REV", "REVISION_ID"),
+    "SFIS_State": ("OPER_NAM", "OPERATOR", "OPERATOR_NAME"),
+    "Model": ("MODEL", "PRODUCT_MODEL"),
+    "Station": ("STATION", "STATION_ID", "CELL"),
+    "Package_Type": ("PKG_TYP", "PACKAGE", "PACKAGE TYPE"),
+    "Test_Type": ("FLOW_ID", "FLOW", "PROCESS"),
+    "DATE": ("DATE_TIME", "TIMESTAMP", "TEST_DATE"),
+    "Error Code": ("ERR_CODE", "ERROR", "SOFT_BIN"),
+    "X_CID": ("X_COORD", "X", "XPOS"),
+    "Y_CID": ("Y_COORD", "Y", "YPOS"),
+    "Test Time": ("TEST_T", "ELAPSED", "DURATION"),
+    "Test Result": ("RESULT", "STATUS", "PASS_FAIL"),
+    "DMC_string": ("DMC", "DATA_MATRIX"),
+    "IC_serial_CID": ("SERIAL", "SERIAL_NUM", "SERIAL_NUMBER"),
+    "IC_DEVICE_ID_CID": ("DEVICE_ID", "IC_ID"),
+    "product_id_CID": ("PRODUCT_ID", "PROD_ID"),
+    "Test_CID": ("TEST_ID", "CID"),
+}
+
+
+def _build_column_aliases(custom_aliases: Dict[str, Sequence[str]]) -> Dict[str, Sequence[str]]:
+    combined: Dict[str, List[str]] = {}
+
+    def add_aliases(canonical: str, aliases: Sequence[str]) -> None:
+        norm_key = _normalize_meta_key(canonical)
+        bucket = combined.setdefault(norm_key, [])
+        for alias in aliases:
+            if not isinstance(alias, str):
+                alias = str(alias)
+            alias = alias.strip()
+            if not alias:
+                continue
+            if alias not in bucket:
+                bucket.append(alias)
+
+    for canonical, aliases in DEFAULT_COLUMN_ALIASES.items():
+        add_aliases(canonical, aliases)
+
+    for canonical, aliases in custom_aliases.items():
+        if isinstance(aliases, str):
+            normalised_aliases = [aliases]
+        else:
+            normalised_aliases = list(aliases)
+        add_aliases(canonical, normalised_aliases)
+
+    return {key: tuple(values) for key, values in combined.items()}
